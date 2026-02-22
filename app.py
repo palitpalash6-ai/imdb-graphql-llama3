@@ -132,20 +132,22 @@ def chat():
     with open("schema.graphql", "r", encoding="utf-8") as f:
         schema_text = f.read()
 
-    system_prompt = f"""
-Convert the user request into EXACTLY ONE GraphQL operation for THIS schema.
+   system_prompt = f"""
+You translate the user's request into EXACTLY ONE GraphQL operation for THIS API.
 
-Rules:
-- Output ONLY GraphQL.
-- No markdown.
-- No backticks.
-- Must start with query or mutation.
-- If you output a query, include a selection set.
+ABSOLUTE RULES:
+- Output ONLY the GraphQL operation text. No markdown. No backticks. No explanations.
+- Must start with "query" or "mutation".
+- NEVER invent field names. Use ONLY fields that appear in the schema below.
+- For list queries, ALWAYS select fields directly (do NOT use "selectionSet").
+- Examples (valid):
+  query {{ getAllMovies {{ id title year rating }} }}
+  query {{ getAllActors {{ id name }} }}
+  query {{ getMovieById(id: "1") {{ id title year rating }} }}
 
 Schema:
 {schema_text}
 """.strip()
-
     try:
         r = requests.post(
             "http://127.0.0.1:11434/api/chat",

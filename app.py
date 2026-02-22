@@ -143,6 +143,7 @@ Schema:
         )
         r.raise_for_status()
         raw = (r.json().get("message", {}).get("content") or "").strip()
+        generated = clean_graphql(raw)
     except Exception as e:
         return jsonify({"error": f"Ollama error: {str(e)}"}), 500
 

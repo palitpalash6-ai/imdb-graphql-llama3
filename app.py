@@ -3,6 +3,7 @@ from ariadne import QueryType, MutationType, make_executable_schema, load_schema
 from ariadne.explorer import ExplorerGraphiQL
 from db import movies_col, actors_col
 import requests
+import re
 
 app = Flask(__name__)
 explorer_html = ExplorerGraphiQL().html(None)
@@ -67,18 +68,15 @@ schema = make_executable_schema(type_defs, [query, mutation])
 # =========================
 # Helper: Clean LLM Output
 # =========================
-
-import re
-
 def clean_graphql(text: str) -> str:
     """
     Return ONLY the first GraphQL operation (query/mutation)
     and remove any explanation text after it.
+    Also removes markdown fences.
     """
     if not text:
         return ""
 
-    # Remove markdown fences
     cleaned = text.replace("```graphql", "").replace("```", "").strip()
 
     # Find start of query or mutation
@@ -89,7 +87,7 @@ def clean_graphql(text: str) -> str:
         # fallback: start at first {
         b = cleaned.find("{")
         if b == -1:
-            return cleaned
+            return cleaned.strip()
         cleaned = cleaned[b:].strip()
 
     # Keep only the first balanced {...}
@@ -107,7 +105,7 @@ def clean_graphql(text: str) -> str:
                 return cleaned[: i + 1].strip()
 
     return cleaned.strip()
-    
+
 # =========================
 # Routes
 # =========================
@@ -132,22 +130,27 @@ def chat():
     with open("schema.graphql", "r", encoding="utf-8") as f:
         schema_text = f.read()
 
-   system_prompt = f"""
+    system_prompt = f"""
 You translate the user's request into EXACTLY ONE GraphQL operation for THIS API.
 
 ABSOLUTE RULES:
 - Output ONLY the GraphQL operation text. No markdown. No backticks. No explanations.
 - Must start with "query" or "mutation".
 - NEVER invent field names. Use ONLY fields that appear in the schema below.
-- For list queries, ALWAYS select fields directly (do NOT use "selectionSet").
-- Examples (valid):
-  query {{ getAllMovies {{ id title year rating }} }}
-  query {{ getAllActors {{ id name }} }}
-  query {{ getMovieById(id: "1") {{ id title year rating }} }}
+- For list queries, select fields directly (do NOT use "selectionSet").
+- Use ONLY these root operations:
+  Queries: getAllMovies, getMovieById, getAllActors, getActorById
+  Mutations: createMovie, updateMovie, deleteMovie, createActor, updateActor, deleteActor
+
+Valid examples:
+query {{ getAllMovies {{ id title year rating }} }}
+query {{ getAllActors {{ id name }} }}
+query {{ getMovieById(id: "1") {{ id title year rating }} }}
 
 Schema:
 {schema_text}
 """.strip()
+
     try:
         r = requests.post(
             "http://127.0.0.1:11434/api/chat",
@@ -163,7 +166,12 @@ Schema:
         )
         r.raise_for_status()
         raw = (r.json().get("message", {}).get("content") or "").strip()
+
         generated = clean_graphql(raw)
+
+        # Safety net: if the model still invents "selectionSet", strip it
+        generated = generated.replace("selectionSet {", "")
+
     except Exception as e:
         return jsonify({"error": f"Ollama error: {str(e)}"}), 500
 

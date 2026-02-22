@@ -1,94 +1,48 @@
-from __future__ import annotations
-
 import re
 import requests
 from flask import Flask, request, jsonify
 from ariadne import QueryType, MutationType, make_executable_schema, load_schema_from_path, graphql_sync
 from ariadne.constants import PLAYGROUND_HTML
-
 from db import movies_col, actors_col
 
 app = Flask(__name__)
 
-# -----------------------------
-# Helpers
-# -----------------------------
+# =========================
+# Helper: Clean LLM Output
+# =========================
 
-def extract_first_graphql_operation(text: str) -> str:
-    """
-    Cleans LLM output and returns ONLY the first GraphQL operation (query/mutation).
-    - Removes markdown fences/backticks
-    - Skips any commentary before query/mutation
-    - Trims to first balanced {...} block so we don't send multiple operations
-    """
+def clean_graphql(text: str) -> str:
     if not text:
         return ""
 
-    # Remove common markdown fences (``` or ```graphql)
-    cleaned = text.replace("```graphql", "").replace("```", "").strip()
+    # Remove markdown fences
+    text = text.replace("```graphql", "")
+    text = text.replace("```", "")
+    text = text.strip()
 
-    # Find first 'query' or 'mutation'
-    idx_q = cleaned.find("query")
-    idx_m = cleaned.find("mutation")
-    starts = [i for i in (idx_q, idx_m) if i != -1]
+    # Start from first query or mutation
+    idx_query = text.find("query")
+    idx_mut = text.find("mutation")
+
+    starts = [i for i in [idx_query, idx_mut] if i != -1]
     if not starts:
-        # fallback: start from first '{'
-        b = cleaned.find("{")
-        return cleaned[b:].strip() if b != -1 else cleaned.strip()
+        brace = text.find("{")
+        return text[brace:] if brace != -1 else text
 
-    start = min(starts)
-    s = cleaned[start:].strip()
-
-    # Cut out only the first balanced {...} operation
-    brace_start = s.find("{")
-    if brace_start == -1:
-        return s
-
-    depth = 0
-    end = None
-    for i in range(brace_start, len(s)):
-        if s[i] == "{":
-            depth += 1
-        elif s[i] == "}":
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
-
-    return s[:end].strip() if end else s.strip()
+    return text[min(starts):].strip()
 
 
-def build_system_prompt(schema_text: str) -> str:
-    return f"""
-You convert the user's request into EXACTLY ONE GraphQL operation for THIS API.
-
-Hard rules (must follow):
-- Output ONLY GraphQL. No markdown. No backticks. No explanations. No schema text.
-- Output EXACTLY ONE operation (one query OR one mutation).
-- Must start with 'query' or 'mutation'.
-- Always include a selection set (fields), e.g. query {{ getAllMovies {{ id title }} }}.
-
-Allowed operations:
-Queries: getAllMovies, getMovieById, getAllActors, getActorById
-Mutations: createMovie, updateMovie, deleteMovie, createActor, updateActor, deleteActor
-
-If creating and user doesn't provide an id, invent a numeric string id like "9007".
-
-Schema:
-{schema_text}
-""".strip()
-
-
-# -----------------------------
-# GraphQL Schema + Resolvers
-# -----------------------------
+# =========================
+# GraphQL Setup
+# =========================
 
 type_defs = load_schema_from_path("schema.graphql")
 query = QueryType()
 mutation = MutationType()
 
 
-# Queries
+# -------- Queries --------
+
 @query.field("getAllMovies")
 def resolve_get_all_movies(*_):
     return list(movies_col.find({}, {"_id": 0}))
@@ -109,7 +63,8 @@ def resolve_get_actor_by_id(*_, id):
     return actors_col.find_one({"id": str(id)}, {"_id": 0})
 
 
-# Mutations - Actors
+# -------- Actor Mutations --------
+
 @mutation.field("createActor")
 def resolve_create_actor(*_, id, name):
     doc = {"id": str(id), "name": name}
@@ -129,7 +84,8 @@ def resolve_delete_actor(*_, id):
     return f"Actor {id} deleted"
 
 
-# Mutations - Movies
+# -------- Movie Mutations --------
+
 @mutation.field("createMovie")
 def resolve_create_movie(*_, id, input):
     doc = {"id": str(id), **input}
@@ -152,14 +108,9 @@ def resolve_delete_movie(*_, id):
 schema = make_executable_schema(type_defs, [query, mutation])
 
 
-# -----------------------------
+# =========================
 # Routes
-# -----------------------------
-
-@app.get("/")
-def home():
-    return "Server running. Go to /graphql or POST /chat", 200
-
+# =========================
 
 @app.route("/graphql", methods=["GET"])
 def playground():
@@ -176,28 +127,35 @@ def graphql_server():
 
 @app.post("/chat")
 def chat():
-    """
-    POST /chat
-    Body: { "message": "Show all movies" }
-    Uses Ollama to convert NL -> GraphQL, then executes GraphQL and returns result.
-    """
     body = request.get_json(silent=True) or {}
     message = (body.get("message") or "").strip()
+
     if not message:
         return jsonify({"error": "Missing 'message'"}), 400
 
-    # Load schema for the LLM prompt
+    # Load schema for prompt grounding
     with open("schema.graphql", "r", encoding="utf-8") as f:
         schema_text = f.read()
 
-    system_prompt = build_system_prompt(schema_text)
+    system_prompt = f"""
+Convert the user request into EXACTLY ONE GraphQL operation.
+Rules:
+- Output ONLY GraphQL.
+- No markdown.
+- No backticks.
+- Must start with query or mutation.
+- Use only valid schema operations.
 
-    # Ask Ollama to produce GraphQL
+Schema:
+{schema_text}
+""".strip()
+
+    # Call Ollama
     try:
         r = requests.post(
             "http://127.0.0.1:11434/api/chat",
             json={
-                "model": "llama3.2:1b",   # change to "llama3" if you pulled it
+                "model": "llama3.2:1b",
                 "stream": False,
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -209,23 +167,26 @@ def chat():
         r.raise_for_status()
         raw = (r.json().get("message", {}).get("content") or "").strip()
     except Exception as e:
-        return jsonify({"error": f"Ollama call failed: {str(e)}"}), 500
+        return jsonify({"error": f"Ollama error: {str(e)}"}), 500
 
-    generated = extract_first_graphql_operation(raw)
+    generated = clean_graphql(raw)
 
-    # Execute generated GraphQL against our own API
+    # Execute GraphQL
     try:
         resp = requests.post(
             "http://127.0.0.1:8080/graphql",
             json={"query": generated},
             timeout=60,
         )
-        # GraphQL returns 200 even for errors sometimes; still parse JSON
         result = resp.json()
     except Exception as e:
-        return jsonify({"raw_llm": raw, "generated_graphql": generated, "error": f"GraphQL exec failed: {str(e)}"}), 500
+        return jsonify({"raw_llm": raw, "generated_graphql": generated, "error": str(e)}), 500
 
-    return jsonify({"raw_llm": raw, "generated_graphql": generated, "result": result})
+    return jsonify({
+        "raw_llm": raw,
+        "generated_graphql": generated,
+        "result": result
+    })
 
 
 if __name__ == "__main__":

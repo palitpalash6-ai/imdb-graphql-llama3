@@ -1,14 +1,11 @@
 import os
 from pymongo import MongoClient
-from dotenv import load_dotenv
 
-load_dotenv()
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+MONGODB_DB = os.getenv("MONGODB_DB", "imdb")
 
-MONGODB_URI = os.getenv("MONGODB_URI")
-DB_NAME = os.getenv("DB_NAME", "imdb")
-
-client = MongoClient(MONGODB_URI)
-db = client[DB_NAME]
+client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+db = client[MONGODB_DB]
 
 movies_col = db["movies"]
 actors_col = db["actors"]

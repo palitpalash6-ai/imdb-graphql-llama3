@@ -74,28 +74,56 @@ def graphql_server():
     status = 200 if success else 400
     return jsonify(result), status
 
-@app.route("/chat", methods=["POST"])
+import requests  # add at top if missing
+
+@app.post("/chat")
 def chat():
     body = request.get_json(silent=True) or {}
     message = (body.get("message") or "").strip()
     if not message:
-        return jsonify({"error": "message is required"}), 400
+        return jsonify({"error": "Missing 'message'"}), 400
 
-    try:
-        gql = nl_to_graphql(message)
-        success, result = graphql_sync(
-            schema,
-            {"query": gql},
-            context_value={"request": request},
-            debug=True
-        )
-        return jsonify({
-            "natural_language": message,
-            "graphql": gql,
-            "result": result
-        }), (200 if success else 400)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+    # Load schema so the model generates the RIGHT operations
+    with open("schema.graphql", "r", encoding="utf-8") as f:
+        schema_text = f.read()
 
+    system_prompt = f"""
+You convert user requests into GraphQL for THIS API.
+Rules:
+- Output ONLY GraphQL (no backticks, no explanations).
+- Use these operations exactly:
+  Queries: getAllMovies, getMovieById(id), getAllActors, getActorById(id)
+  Mutations: createMovie(id, input), updateMovie(id, input), deleteMovie(id),
+             createActor(id, name), updateActor(id, name), deleteActor(id)
+- If creating and user doesn't give an id, invent a numeric string id like "9007".
+Schema:
+{schema_text}
+""".strip()
+
+    # Ask Ollama to produce GraphQL
+    r = requests.post(
+        "http://127.0.0.1:11434/api/chat",
+        json={
+            "model": "llama3.2:1b",
+            "stream": False,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message},
+            ],
+        },
+        timeout=60,
+    )
+    r.raise_for_status()
+    generated = (r.json().get("message", {}).get("content") or "").strip()
+
+    # Execute the generated GraphQL against our own API
+    resp = requests.post(
+        "http://127.0.0.1:8080/graphql",
+        json={"query": generated},
+        timeout=30,
+    )
+    result = resp.json()
+
+    return jsonify({"generated_graphql": generated, "result": result})
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)

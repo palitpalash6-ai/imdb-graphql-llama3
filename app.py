@@ -4,6 +4,7 @@ from ariadne.constants import PLAYGROUND_HTML
 from db import movies_col, actors_col
 from llm import nl_to_graphql
 app = Flask(__name__)
+import re
 
 import asyncio
 import httpx
@@ -88,18 +89,23 @@ def chat():
         schema_text = f.read()
 
     system_prompt = f"""
-You convert user requests into GraphQL for THIS API.
-Rules:
-- Output ONLY GraphQL (no backticks, no explanations).
-- Use these operations exactly:
-  Queries: getAllMovies, getMovieById(id), getAllActors, getActorById(id)
-  Mutations: createMovie(id, input), updateMovie(id, input), deleteMovie(id),
-             createActor(id, name), updateActor(id, name), deleteActor(id)
-- If creating and user doesn't give an id, invent a numeric string id like "9007".
+You are a translator from English to GraphQL for THIS API.
+
+ABSOLUTE RULES (must follow):
+- Output ONLY the GraphQL operation. No markdown. No backticks. No explanations. No schema text.
+- Output must start with "query" or "mutation".
+- Use ONLY these operation names:
+  Queries: getAllMovies, getMovieById, getAllActors, getActorById
+  Mutations: createMovie, updateMovie, deleteMovie, createActor, updateActor, deleteActor
+- getAllMovies must include a selection set, e.g.:
+  query {{ getAllMovies {{ id title year rating }} }}
+- getAllActors must include a selection set, e.g.:
+  query {{ getAllActors {{ id name }} }}
+- If the user asks to create something and does not give an id, invent a numeric string id like "9007".
+
 Schema:
 {schema_text}
 """.strip()
-
     # Ask Ollama to produce GraphQL
     r = requests.post(
         "http://127.0.0.1:11434/api/chat",
@@ -114,8 +120,8 @@ Schema:
         timeout=60,
     )
     r.raise_for_status()
-    generated = (r.json().get("message", {}).get("content") or "").strip()
-
+    raw = (r.json().get("message", {}).get("content") or "").strip()
+generated = extract_graphql(raw)
     # Execute the generated GraphQL against our own API
     resp = requests.post(
         "http://127.0.0.1:8080/graphql",
@@ -124,6 +130,26 @@ Schema:
     )
     result = resp.json()
 
-    return jsonify({"generated_graphql": generated, "result": result})
+    return jsonify({"raw_llm": raw, "generated_graphql": generated, "result": result})
+def extract_graphql(text: str) -> str:
+    """
+    Extract the first valid GraphQL operation from LLM output.
+    Removes markdown fences and extra commentary.
+    """
+    if not text:
+        return ""
+
+    # Remove code fences
+    cleaned = text.replace("```graphql", "").replace("```", "").strip()
+
+    # Find first occurrence of a GraphQL operation
+    m = re.search(r"\b(mutation|query)\b", cleaned)
+    if not m:
+        # Sometimes LLM returns just "{ ... }"
+        m2 = re.search(r"\{", cleaned)
+        return cleaned[m2.start():].strip() if m2 else cleaned
+
+    return cleaned[m.start():].strip()
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)

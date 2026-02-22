@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from ariadne import QueryType, MutationType, make_executable_schema, load_schema_from_path, graphql_sync
 from ariadne.constants import PLAYGROUND_HTML
 from db import movies_col, actors_col
-
+from llm import nl_to_graphql
 app = Flask(__name__)
 
 type_defs = load_schema_from_path("schema.graphql")
@@ -69,6 +69,29 @@ def graphql_server():
     success, result = graphql_sync(schema, data, context_value={"request": request}, debug=True)
     status = 200 if success else 400
     return jsonify(result), status
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    body = request.get_json(force=True)
+    message = (body.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+
+    try:
+        gql = nl_to_graphql(message)
+        success, result = graphql_sync(
+            schema,
+            {"query": gql},
+            context_value={"request": request},
+            debug=True
+        )
+        return jsonify({
+            "natural_language": message,
+            "graphql": gql,
+            "result": result
+        }), (200 if success else 400)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)

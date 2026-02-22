@@ -67,29 +67,47 @@ schema = make_executable_schema(type_defs, [query, mutation])
 # =========================
 # Helper: Clean LLM Output
 # =========================
+
+import re
+
 def clean_graphql(text: str) -> str:
     """
-    Remove markdown fences and keep only the first GraphQL operation.
-    Returns a string that ideally starts with 'query' or 'mutation'.
+    Return ONLY the first GraphQL operation (query/mutation)
+    and remove any explanation text after it.
     """
     if not text:
         return ""
 
+    # Remove markdown fences
     cleaned = text.replace("```graphql", "").replace("```", "").strip()
 
-    q = cleaned.find("query")
-    m = cleaned.find("mutation")
-    starts = [i for i in (q, m) if i != -1]
-    if starts:
-        return cleaned[min(starts):].strip()
+    # Find start of query or mutation
+    m = re.search(r"\b(query|mutation)\b", cleaned)
+    if m:
+        cleaned = cleaned[m.start():].strip()
+    else:
+        # fallback: start at first {
+        b = cleaned.find("{")
+        if b == -1:
+            return cleaned
+        cleaned = cleaned[b:].strip()
 
-    # Sometimes LLM returns only "{ ... }"
-    brace = cleaned.find("{")
-    if brace != -1:
-        return cleaned[brace:].strip()
+    # Keep only the first balanced {...}
+    first_brace = cleaned.find("{")
+    if first_brace == -1:
+        return cleaned.strip()
 
-    return cleaned
+    depth = 0
+    for i in range(first_brace, len(cleaned)):
+        if cleaned[i] == "{":
+            depth += 1
+        elif cleaned[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return cleaned[: i + 1].strip()
 
+    return cleaned.strip()
+    
 # =========================
 # Routes
 # =========================

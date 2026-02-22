@@ -76,7 +76,7 @@ def graphql_server():
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    body = request.get_json(force=True)
+    body = request.get_json(silent=True) or {}
     message = (body.get("message") or "").strip()
     if not message:
         return jsonify({"error": "message is required"}), 400
@@ -96,41 +96,6 @@ def chat():
         }), (200 if success else 400)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
-
-@app.post("/chat")
-def chat():
-    """
-    POST /chat
-    Body: { "message": "create a movie id 9010 titled Interstellar..." }
-    Returns: { "generated_graphql": "...", "result": {...} }
-    """
-    body = request.get_json(silent=True) or {}
-    message = (body.get("message") or "").strip()
-    if not message:
-        return jsonify({"error": "Missing 'message'"}), 400
-
-    # Load schema text so the LLM stays aligned with YOUR schema
-    with open("schema.graphql", "r", encoding="utf-8") as f:
-        schema_text = f.read()
-
-    try:
-        generated = asyncio.run(nl_to_graphql(message, schema_text))
-    except Exception as e:
-        return jsonify({"error": f"LLM failed: {str(e)}"}), 500
-
-    # Execute the generated GraphQL by calling our own /graphql endpoint
-    try:
-        resp = httpx.post(
-            "http://127.0.0.1:8080/graphql",
-            json={"query": generated},
-            timeout=30.0
-        )
-        resp.raise_for_status()
-        result = resp.json()
-    except Exception as e:
-        return jsonify({"generated_graphql": generated, "error": f"GraphQL execution failed: {str(e)}"}), 500
-
-    return jsonify({"generated_graphql": generated, "result": result})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)

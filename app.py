@@ -3,6 +3,7 @@ from ariadne import QueryType, MutationType, make_executable_schema, load_schema
 from ariadne.explorer import ExplorerGraphiQL
 from db import movies_col, actors_col
 import requests
+import re
 
 app = Flask(__name__)
 
@@ -73,21 +74,39 @@ def resolve_delete_movie(*_, id):
 schema = make_executable_schema(type_defs, [query, mutation])
 
 # =========================
-# Helper: Clean LLM Output
+# Helper: Extract GraphQL from LLM Output
 # =========================
 
-def clean_graphql(text: str) -> str:
+def extract_graphql(text: str) -> str:
+    """
+    Extract the first valid GraphQL operation from LLM output.
+    Removes markdown fences and extra commentary.
+    Returns ONE operation starting with 'query' or 'mutation'.
+    """
     if not text:
         return ""
-    text = text.replace("```graphql", "")
-    text = text.replace("```", "")
-    text = text.strip()
-    q = text.find("query")
-    m = text.find("mutation")
-    starts = [i for i in (q, m) if i != -1]
-    if starts:
-        return text[min(starts):].strip()
-    return text
+
+    # remove code fences
+    cleaned = text.replace("```graphql", "").replace("```", "").strip()
+
+    # find first 'query' or 'mutation'
+    m = re.search(r"\b(query|mutation)\b", cleaned)
+    if not m:
+        # fallback if model returns only "{ ... }"
+        m2 = re.search(r"\{", cleaned)
+        return cleaned[m2.start():].strip() if m2 else cleaned
+
+    op = cleaned[m.start():].strip()
+
+    # If model returned multiple ops, keep only the first one
+    # (naive split: second occurrence of query/mutation)
+    m2 = re.search(r"\b(query|mutation)\b", op[len("query"):])  # search later
+    if m2:
+        # m2 is relative to substring; cut at that point
+        cut_index = len("query") + m2.start()
+        op = op[:cut_index].strip()
+
+    return op
 
 # =========================
 # Routes
@@ -116,18 +135,20 @@ def chat():
         schema_text = f.read()
 
     system_prompt = f"""
-Convert the user request into EXACTLY ONE GraphQL operation.
+Convert the user request into EXACTLY ONE GraphQL operation for THIS API.
 
-Rules:
-- Output ONLY GraphQL.
-- No markdown.
-- No backticks.
+ABSOLUTE RULES:
+- Output ONLY GraphQL (no markdown, no backticks, no explanations).
 - Must start with query or mutation.
+- For list queries, ALWAYS include a selection set.
+  Example:
+    query {{ getAllMovies {{ id title year rating }} }}
 
 Schema:
 {schema_text}
 """.strip()
 
+    # 1) Ask Ollama
     try:
         r = requests.post(
             "http://127.0.0.1:11434/api/chat",
@@ -143,12 +164,15 @@ Schema:
         )
         r.raise_for_status()
         raw = (r.json().get("message", {}).get("content") or "").strip()
-        generated = clean_graphql(raw)
     except Exception as e:
         return jsonify({"error": f"Ollama error: {str(e)}"}), 500
 
-    generated = clean_graphql(raw)
+    # 2) Extract clean GraphQL
+    generated = extract_graphql(raw)
+    if not generated:
+        return jsonify({"raw_llm": raw, "error": "Could not extract GraphQL"}), 500
 
+    # 3) Execute GraphQL
     try:
         resp = requests.post(
             "http://127.0.0.1:8080/graphql",

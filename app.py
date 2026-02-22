@@ -90,6 +90,40 @@ def extract_graphql(text: str) -> str:
 
     return cleaned[m.start():].strip()
 
+    def extract_first_graphql_operation(text: str) -> str:
+    if not text:
+        return ""
+
+    # Remove ALL code fences like ``` or ```graphql
+    cleaned = re.sub(r"```[a-zA-Z]*", "", text)
+    cleaned = cleaned.replace("```", "").strip()
+
+    # Find first query/mutation
+    m = re.search(r"\b(query|mutation)\b", cleaned)
+    if not m:
+        b = cleaned.find("{")
+        return cleaned[b:].strip() if b != -1 else cleaned.strip()
+
+    s = cleaned[m.start():]
+
+    # Keep only the first balanced {...} block (prevents multiple operations)
+    first_brace = s.find("{")
+    if first_brace == -1:
+        return s.strip()
+
+    depth = 0
+    end = None
+    for i in range(first_brace, len(s)):
+        if s[i] == "{":
+            depth += 1
+        elif s[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    return s[:end].strip() if end else s.strip()
+    
     @app.post("/chat")
 def chat():
     body = request.get_json(silent=True) or {}
@@ -132,8 +166,7 @@ Schema:
     r.raise_for_status()
 
     raw = (r.json().get("message", {}).get("content") or "").strip()
-    generated = extract_graphql(raw)
-
+generated = extract_first_graphql_operation(raw)
     resp = requests.post(
         "http://127.0.0.1:8080/graphql",
         json={"query": generated},

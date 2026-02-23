@@ -1,0 +1,46 @@
+AI-Powered GraphQL Movie API
+
+This project is a full-stack application designed to manage a movie and actor database using **GraphQL** and **MongoDB Atlas**. It features a unique integration with a local Large Language Model (**Ollama**) to translate natural language into executable GraphQL commands.
+
+Key Features
+
+*   **Full CRUD Support:** Complete implementation of Create, Read, Update, and Delete operations for movies and actors.
+*   **AI-Driven Interface:** Uses `llama3.2:1b` to convert plain English (e.g., "Show all action movies") into precise GraphQL queries.
+*   **Cloud Integration:** Backed by **MongoDB Atlas** for reliable, cloud-based document storage.
+*   **Type-Safe API:** Built with **Ariadne** and **Python Flask** to ensure structured and validated data transfers.
+
+Database Architecture
+
+The application interacts with a MongoDB database named `imdb` containing two primary collections:
+
+*   **Movies:** Stores `id`, `title`, `genres`, `director`, `actors`, `year`, `rating`, and `revenue`.
+*   **Actors:** Stores `id` and `name` profiles.
+
+Tech Stack
+
+- **Backend:** Python (Flask), Ariadne (GraphQL)
+- **Database:** MongoDB Atlas & MongoDB Compass
+- **AI/LLM:** Ollama (running llama3.2:1b)
+- **Environment:** Dotenv for secure credential management
+
+GraphQL Operations
+
+Queries (Retrieval)
+- getAllMovies`: Fetches the entire movie catalog.
+- getMovieById(id)`: Retrieves a specific movie document.
+- getAllActors`: Lists all performers in the database.
+
+Mutations (C.U.D.)
+- `createMovie` / `createActor`: Inserts new records.
+- `updateMovie` / `updateActor`: Modifies existing entries.
+- `deleteMovie` / `deleteActor`: Removes documents securely.
+
+How to Run
+
+1.  **Environment Setup:** Create a `.env` file with your `MONGODB_URI` and `DB_NAME=imdb`.
+2.  **Start AI Engine:** Run `ollama serve` in your terminal.
+3.  **Launch Server:** Execute `python app.py`.
+4.  **Explore:** Access the GraphQL Playground at `http://127.0.0.1`.
+
+.......
+*Developed as part of a technical assignment to demonstrate the integration of Modern APIs, Cloud Databases, and LLM automation.*

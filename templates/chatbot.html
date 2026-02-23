@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IMDB GraphQL Chatbot</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+      .container { max-width: 900px; margin: 32px auto; padding: 0 16px; }
+      .card { background: #111827; border: 1px solid #334155; border-radius: 12px; padding: 16px; }
+      h1 { margin-top: 0; font-size: 1.6rem; }
+      .hint { color: #94a3b8; margin-bottom: 16px; }
+      #messages { height: 420px; overflow-y: auto; border: 1px solid #334155; border-radius: 10px; padding: 12px; background: #020617; }
+      .msg { margin: 10px 0; padding: 10px; border-radius: 8px; white-space: pre-wrap; }
+      .user { background: #1d4ed8; }
+      .bot { background: #14532d; }
+      .error { background: #7f1d1d; }
+      form { display: flex; gap: 8px; margin-top: 12px; }
+      input { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #475569; background: #0b1220; color: #e2e8f0; }
+      button { padding: 10px 14px; border-radius: 8px; border: none; background: #2563eb; color: white; cursor: pointer; }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+      .links { margin-top: 12px; font-size: 0.9rem; }
+      a { color: #93c5fd; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <h1>🎬 IMDB GraphQL Chatbot</h1>
+        <p class="hint">Ask in natural language. The app converts your request to GraphQL and executes it.</p>
+
+        <div id="messages"></div>
+
+        <form id="chat-form">
+          <input id="message-input" placeholder="Example: show all actors" required />
+          <button id="send-btn" type="submit">Send</button>
+        </form>
+
+        <div class="links">
+          API endpoints: <a href="/graphql" target="_blank" rel="noreferrer">GraphiQL</a>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById("chat-form");
+      const input = document.getElementById("message-input");
+      const messages = document.getElementById("messages");
+      const sendBtn = document.getElementById("send-btn");
+
+      function addMessage(text, kind) {
+        const div = document.createElement("div");
+        div.className = `msg ${kind}`;
+        div.textContent = text;
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const message = input.value.trim();
+        if (!message) return;
+
+        addMessage(`You: ${message}`, "user");
+        input.value = "";
+        sendBtn.disabled = true;
+
+        try {
+          const response = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message })
+          });
+          const data = await response.json();
+
+          if (!response.ok) {
+            addMessage(`Error: ${data.error || "Unknown error"}`, "error");
+            return;
+          }
+
+          addMessage(
+            `Generated GraphQL:\n${data.generated_graphql}\n\nResult:\n${JSON.stringify(data.result, null, 2)}`,
+            "bot"
+          );
+        } catch (error) {
+          addMessage(`Request failed: ${error}`, "error");
+        } finally {
+          sendBtn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
